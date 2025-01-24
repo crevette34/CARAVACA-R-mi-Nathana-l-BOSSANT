@@ -1,0 +1,139 @@
+import requests
+import time
+from datetime import datetime
+import json
+
+import matplotlib.pyplot as plt
+import numpy as n # généralement on met np j'avais envie de mettre n
+
+# Les url des données que l'on va chercehr
+url_parking = "https://portail-api-data.montpellier3m.fr/offstreetparking?limit=1000"
+url_velo = "https://portail-api-data.montpellier3m.fr/bikestation?limit=1000"
+
+# elle sert a récupérer les données
+def récupére_data(url):
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Erreur lors de la requête : {response.status_code}")
+    except Exception as e:
+        print(f"Erreur : {e}")
+    return None
+
+# Fonction pour tracer les courbes avec un meilleur affichage des légendes
+def tracer_courbe(evolution_places, titre):
+    plt.figure(figsize=(12, 11))
+    for nom, data in evolution_places.items():
+        temps = [t[0] for t in data]
+        places = [t[1] for t in data]
+        plt.plot(temps, places, marker='o', linestyle='-', label=nom)
+    plt.title(titre, fontsize=16)
+    plt.xlabel("Temps (en secondes)", fontsize=12)
+    plt.ylabel("Places disponibles", fontsize=12)
+    plt.legend(title="Emplacements", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    plt.xticks(rotation=45, ha="right")
+    plt.show()
+
+# Fonction pour sauvegarder les données
+def sauvegarder_donnees_combinees(parkings_data, velo_data, fichier_json, fichier_texte, evolution_places_parking, evolution_places_velo, temps_ecoule):
+    maintenant = datetime.now()
+    date_actuelle = maintenant.strftime("%d/%m/%Y")
+    heure_actuelle = maintenant.strftime("%H:%M:%S")
+
+    donnees = {
+        "date": date_actuelle,
+        "heure": heure_actuelle,
+        "parkings_voitures": [],
+        "parkings_velos": []
+    }
+
+    with open(fichier_texte, "a") as file_texte:
+        if parkings_data:
+            for item in parkings_data:
+                nom = item.get("name", {}).get("value", "Non spécifié")
+                places_libres = int(item.get("availableSpotNumber", {}).get("value", 0))
+                places_totales = item.get("totalSpotNumber", {}).get("value", "N/A")
+                file_texte.write(f"Parking voiture | Nom : {nom} | Date : {date_actuelle} | Heure : {heure_actuelle} | Places libres : {places_libres}/{places_totales}\n")
+                donnees["parkings_voitures"].append({"nom": nom, "places_libres": places_libres, "places_totales": places_totales})
+                if nom not in evolution_places_parking:
+                    evolution_places_parking[nom] = []
+                evolution_places_parking[nom].append((temps_ecoule, places_libres))
+
+        if velo_data:
+            for item in velo_data:
+                nom = item.get("address", {}).get("value", {}).get("streetAddress", "Non spécifié")
+                places_libres = int(item.get("freeSlotNumber", {}).get("value", 0))
+                places_totales = item.get("totalSlotNumber", {}).get("value", "N/A")
+                file_texte.write(f"Parking vélo | Nom : {nom} | Date : {date_actuelle} | Heure : {heure_actuelle} | Places libres : {places_libres}/{places_totales}\n")
+                donnees["parkings_velos"].append({"nom": nom, "places_libres": places_libres, "places_totales": places_totales})
+                if nom not in evolution_places_velo:
+                    evolution_places_velo[nom] = []
+                evolution_places_velo[nom].append((temps_ecoule, places_libres))
+
+    with open(fichier_json, "a") as file_json:
+        json.dump(donnees, file_json, ensure_ascii=False, indent=4)
+        file_json.write("\n")
+
+
+def suivie():
+    Te = 3000  # Intervalle de temps pour chaque requête (en secondes)
+    duree_acquisition = 1 * 86400  # Durée totale de l'acquisition des données (en secondes)
+    fichier_json = "occupation_parkings_et_velos.json"
+    fichier_texte = "occupation_parkings_et_velos.txt"
+
+    evolution_places_parking = {}
+    evolution_places_velo = {}
+    temps_initial = time.time()
+
+    print(f"Début de l'acquisition des données... (Période d'échantillonnage : {Te} secondes, Durée : {duree_acquisition // 60} minutes)")
+    start_time = time.time()
+    while time.time() - start_time < duree_acquisition:
+        temps_ecoule = time.time() - temps_initial
+        parkings_data = récupére_data(url_parking)
+        velo_data = récupére_data(url_velo)
+        if parkings_data or velo_data:
+            sauvegarder_donnees_combinees(parkings_data, velo_data, fichier_json, fichier_texte, evolution_places_parking, evolution_places_velo, temps_ecoule)
+            print("Données des parkings voitures et vélos sauvegardées.")
+        else:
+            print("Impossible de récupérer les données des parkings ou vélos.")
+        time.sleep(Te)
+
+    print("Fin de l'acquisition des données. Affichage des courbes...")
+    tracer_courbe(evolution_places_parking, "Évolution des places disponibles dans les parkings voitures")
+    tracer_courbe(evolution_places_velo, "Évolution des places disponibles dans les parkings vélos")
+
+    #Fais la Heatmap en récupérant le nom des parkings
+    labels = [item.get("address", {}).get("value", {}).get("streetAddress", "Non spécifié") for item in velo_data]
+
+    # Heatmap de corrélation
+    # Générer des données fictives pour la heatmap
+    n.random.seed(42)
+    n_parkings = len(labels)  # Nombre de parkings basé sur les données récupérées
+    temps = n.arange(10)  # 10 périodes de temps
+    data = n.random.rand(10, nb_parkings) * 100  # Taux d'occupation entre 0 et 100%
+
+    # Calculer la matrice de corrélation des parkings
+    correlation_matrix = n.corrcoef(data.T)  # Corrélation entre parking
+
+    # Création de la figure pour la heatmap
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # trace la heatmap
+    cax = ax.imshow(correlation_matrix, cmap="coolwarm", interpolation="nearest")
+    fig.colorbar(cax)
+
+    # Met les  élément du graphique
+    ax.set_xticks(n.arange(nb_parkings))
+    ax.set_yticks(n.arange(nb_parkings))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels)
+    ax.set_title("Heatmap de corrélation des parkings")
+
+
+    plt.show()
+
+suivie()
